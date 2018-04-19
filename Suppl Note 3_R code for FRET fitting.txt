@@ -1,0 +1,191 @@
+#R code for curve fitting of FRET results, B. Hochreiter 2018
+
+#please adjust variables:
+
+	separator=";"			#determines the separator in the raw data file ("\t"=tabulator)
+
+	fittype="agg"			#determines whether data should be aggregated prior to fitting ("agg" or "non-agg")
+	DFRET=1				#display DFRET graph? (1=yes, 0=no)
+	NFRETc=1			#display NFRETc graph? (1=yes, 0=no)
+	fitpar="DFRET"			#determine variable used for fitting ("DFRET" or "NFRETc")
+
+	Kstart=1e-5			#enter strat variable for K
+	zstart=1			#enter start variable for z
+	Fmaxstart=0.1			#enter start variable for FRETmax
+
+	lowerAD=0.1			#enter lower cutoff of acceptor to donor ratio used for fitting
+	upperAD=4			#enter upper cutoff of acceptor to donor ratio used for fitting
+
+	printresults=1			#automatically export image into output folder? (1=yes, 0=no)
+
+#DO NOT CHANGE ANYTHING AFTER THIS LINE
+######################################################################################
+
+path<-file.choose()
+data1<-read.table(path,header=TRUE,fill=TRUE,sep=separator)
+name1<-basename(path)
+name<-sub("\\.txt","",name1)
+name<-sub("\\.csv","",name)
+name2<-paste(sep="",name,"_data.png")
+name3<-paste(sep="",name,"_fitting.tif")
+name4<-paste(sep="",name,"_FITresults.txt")
+
+######################################################################################
+
+if(fittype=="agg"){
+
+f1<-function(don,acc,K,z,Fmax){(-sqrt((-don*K-acc*z*K-1)^2-4*don*acc*z*K^2)+don*K+acc*z*K+1)/(2*K*sqrt(don*acc))*Fmax}
+f2<-function(don,acc,K,z,Fmax){(-sqrt((-don*K-acc*z*K-1)^2-4*don*acc*z*K^2)+don*K+acc*z*K+1)/(2*K*don)*Fmax}
+
+data1$ADround<-round(data1$acctodon,1)
+Aggr<-aggregate(.~ADround,data=data1,median)
+Aggrquart<-aggregate(.~ADround,data=data1,quantile)
+Aggr$DFRETq1<-Aggrquart$DFRET[,2]
+Aggr$DFRETq3<-Aggrquart$DFRET[,4]
+Aggr$NFRETcq1<-Aggrquart$NFRETc[,2]
+Aggr$NFRETcq3<-Aggrquart$NFRETc[,4]
+
+Aggrsub=Aggr[!Aggr$ADround>upperAD,]
+data1sub=data1[!data1$ADround>upperAD,]
+Aggrquartsub=Aggrquart[!Aggrquart$ADround>upperAD,]
+
+Aggrsub=Aggrsub[!Aggrsub$ADround<lowerAD,]
+data1sub=data1sub[!data1sub$ADround<lowerAD,]
+Aggrquartsub=Aggrquart[!Aggrquart$ADround<lowerAD,]
+
+if(fitpar=="DFRET"){
+	fit<-nls(DFRET~f2(don,acc,K,z,Fmax),algorithm="port",data=Aggrsub,start=list(K=Kstart,z=zstart,Fmax=Fmaxstart), lower=list(K=1e-20,z=0.01,Fmax=0.01), upper=list(K=1e20,z=10,Fmax=1),control=list(maxiter = 500000, minFactor=1/2000, warnOnly=T))
+	start=coef(fit)
+
+	fit<-nls(DFRET~f2(don,acc,K,z,Fmax),algorithm="port",data=Aggrsub,start=list(K=start[1],z=start[2],Fmax=start[3]),lower=list(K=1e-20,z=0.1,Fmax=0.01), upper=list(K=1e20,z=3,Fmax=1),control=list(maxiter = 50000, minFactor=1/2000, warnOnly=T))
+}else if(fitpar=="NFRETc"){
+	fit<-nls(NFRETc~f1(don,acc,K,z,Fmax),algorithm="port",data=Aggrsub,start=list(K=Kstart,z=zstart,Fmax=Fmaxstart), lower=list(K=1e-20,z=0.1,Fmax=0.01), upper=list(K=1e20,z=3,Fmax=1),control=list(maxiter = 500000, minFactor=1/2000, warnOnly=T))
+	start=coef(fit)
+
+	fit<-nls(NFRETc~f1(don,acc,K,z,Fmax),algorithm="port",data=Aggrsub,start=list(K=start[1],z=start[2],Fmax=start[3]),lower=list(K=1e-20,z=0.1,Fmax=0.01), upper=list(K=1e20,z=3,Fmax=1),control=list(maxiter = 50000, minFactor=1/2000, warnOnly=T))
+}else{"ERROR: select DFRET or NFRET for fitting"}
+
+
+fitv<-coef(fit)
+DFRETfit=f2(Aggrsub$don,Aggrsub$acc,fitv[1],fitv[2],fitv[3])
+DFRETres=Aggrsub$DFRET-DFRETfit
+
+NFRETfit=f1(Aggrsub$don,Aggrsub$acc,fitv[1],fitv[2],fitv[3])
+NFRETres=Aggrsub$NFRETc-NFRETfit
+
+yupb=2*fitv[3]
+if(DFRET+NFRETc==1){
+dev.new(width=9,height=3)
+old.par=par(mfrow=c(1, 3))
+}
+
+if(DFRET+NFRETc==2){
+dev.new(width=9,height=6)
+old.par=par(mfrow=c(2, 3))
+}
+
+if(DFRET==1){
+	plot(data1sub$acctodon,data1sub$DFRET,ylim=c(0,yupb),xlim=c(0,upperAD),xlab="[acc]:[don]",ylab="DFRET",col=rgb(0,0,0,alpha=0.05),pch=20, main="original data",cex.lab=1.5, cex.axis=1.5, cex.main=1.5, cex.sub=1.5)
+
+	plot(Aggrsub$acctodon,Aggrsub$DFRET,ylim=c(0,yupb),xlim=c(0,upperAD),xlab="[acc]:[don]",ylab="DFRET",col=rgb(0,0,0),pch=15, main="aggregated data",cex.lab=1.5, cex.axis=1.5, cex.main=1.5, cex.sub=1.5)
+	arrows(Aggrsub$acctodon, Aggrsub$DFRETq1, Aggrsub$acctodon, Aggrsub$DFRETq3, length=0.05, angle=90, code=3)
+	lines(Aggrsub$acctodon,DFRETfit,lwd=2,lty=2,col="red")
+
+	plot(Aggrsub$acctodon,DFRETres,xlim=c(0,upperAD),ylim=c(-yupb,yupb),col=rgb(0,0,1),xlab="[acc]:[don]",ylab="DFRET residuals",pch=15,main="residuals",cex.lab=1.5, cex.axis=1.5, cex.main=1.5, cex.sub=1.5)
+	lines(c(0,upperAD),c(0,0),col="red")
+
+}
+
+if(NFRETc==1){
+	if(DFRET==0){ main1="original data";main2="aggregated data";main3="residuals"}else{main1="";main2="";main3=""}
+
+	plot(data1sub$acctodon,data1sub$NFRETc,ylim=c(0,yupb),xlim=c(0,upperAD), xlab="[acc]:[don]", ylab="NFRETc",col=rgb(0,0,0,alpha=0.05),pch=20,main=main1,cex.lab=1.5, cex.axis=1.5, cex.main=1.5, cex.sub=1.5)
+
+	plot(Aggrsub$acctodon,Aggrsub$NFRETc,ylim=c(0,yupb),xlim=c(0,upperAD),xlab="[acc]:[don]",ylab="NFRETc",col=rgb(0,0,0),pch=15, main=main2,cex.lab=1.5, cex.axis=1.5, cex.main=1.5, cex.sub=1.5)
+	arrows(Aggrsub$acctodon, Aggrsub$NFRETcq1, Aggrsub$acctodon, Aggrsub$NFRETcq3, length=0.05, angle=90, code=3)
+	lines(Aggrsub$acctodon,NFRETfit,lwd=2,lty=2,col="red")
+
+	plot(Aggrsub$acctodon,NFRETres,xlim=c(0,upperAD),ylim=c(-yupb,yupb),col=rgb(0,0,1),xlab="[acc]:[don]",ylab="NFRETc residuals",pch=15,main=main3,cex.lab=1.5, cex.axis=1.5, cex.main=1.5, cex.sub=1.5)
+	lines(c(0,upperAD),c(0,0),col="red")
+}
+
+if(DFRET+NFRETc==1){if(printresults==1){dev.print(tif,file=name3,unit="px",width=900,height=300)}}
+if(DFRET+NFRETc==2){if(printresults==1){dev.print(tif,file=name3,unit="px",width=900,height=600)}}
+
+
+
+}
+
+#############################################################################################
+
+if(fittype=="non-agg"){
+
+data1sub=data1[!data1$acctodon>upperAD,]
+data1sub=data1sub[!data1sub$acctodon<lowerAD,]
+
+f1<-function(don,acc,K,z,Fmax){(-sqrt((-don*K-acc*z*K-1)^2-4*don*acc*z*K^2)+don*K+acc*z*K+1)/(2*K*sqrt(don*acc))*Fmax}
+f2<-function(don,acc,K,z,Fmax){(-sqrt((-don*K-acc*z*K-1)^2-4*don*acc*z*K^2)+don*K+acc*z*K+1)/(2*K*don)*Fmax}
+
+if(fitpar=="DFRET"){
+	fit<-nls(DFRET~f2(don,acc,K,z,Fmax),algorithm="port",data=data1sub,start=list(K=Kstart,z=zstart,Fmax=Fmaxstart), lower=list(K=1e-20,z=0.01,Fmax=0.01), upper=list(K=1e20,z=10,Fmax=1),control=list(maxiter = 500000, minFactor=1/2000, warnOnly=T))
+	start=coef(fit)
+
+	fit<-nls(DFRET~f2(don,acc,K,z,Fmax),algorithm="port",data=data1sub,start=list(K=start[1],z=start[2],Fmax=start[3]), lower=list(K=1e-20,z=0.01,Fmax=0.01),control=list(maxiter = 50000, minFactor=1/2000, warnOnly=T))
+}else if(fitpar=="NFRETc"){
+	fit<-nls(NFRETc~f1(don,acc,K,z,Fmax),algorithm="port",data=data1sub,start=list(K=Kstart,z=zstart,Fmax=Fmaxstart), lower=list(K=1e-20,z=0.1,Fmax=0.01), upper=list(K=1e20,z=3,Fmax=1),control=list(maxiter = 500000, minFactor=1/2000, warnOnly=T))
+	start=coef(fit)
+
+	fit<-nls(NFRETc~f1(don,acc,K,z,Fmax),algorithm="port",data=data1sub,start=list(K=start[1],z=start[2],Fmax=start[3]),lower=list(K=1e-20,z=0.1,Fmax=0.01), upper=list(K=1e20,z=3,Fmax=1),control=list(maxiter = 50000, minFactor=1/2000, warnOnly=T))
+}
+
+fitv<-coef(fit)
+NFRETfit=f1(data1sub$don,data1sub$acc,fitv[1],fitv[2],fitv[3])
+DFRETfit=f2(data1sub$don,data1sub$acc,fitv[1],fitv[2],fitv[3])
+DFRETres=data1sub$DFRET-DFRETfit
+NFRETres=data1sub$NFRETc-NFRETfit
+
+yupb=2*fitv[3]
+if(DFRET+NFRETc==1){
+dev.new(width=6,height=3)
+old.par=par(mfrow=c(1, 2))
+}
+
+if(DFRET+NFRETc==2){
+dev.new(width=6,height=6)
+old.par=par(mfrow=c(2, 2))
+}
+
+
+if(DFRET==1){
+	plot(data1sub$acctodon,data1sub$DFRET,ylim=c(0,yupb),xlim=c(0,3),xlab="[acc]:[don]",ylab="DFRET",col=rgb(0,0,0,alpha=0.5),pch=20, main="original data",cex.lab=1.5, cex.axis=1.5, cex.main=1.5, cex.sub=1.5)
+	points(data1sub$acctodon,DFRETfit,col=rgb(1,0,0,alpha=0.4),pch=20)
+
+	plot(data1sub$acctodon,DFRETres,xlim=c(0,3),ylim=c(-yupb,yupb),col=rgb(0,0,1),xlab="[acc]:[don]",ylab="DFRET residuals",pch=15,main="residuals",cex.lab=1.5, cex.axis=1.5, cex.main=1.5, cex.sub=1.5)
+	lines(c(0,3),c(0,0),col="red")
+
+}
+
+
+if(NFRETc==1){
+	if(DFRET==0){ main1="original data";main2="residuals"}else{main1="";main2=""}
+
+	plot(data1sub$acctodon,data1sub$NFRETc,ylim=c(0,yupb),xlim=c(0,3),xlab="[acc]:[don]",ylab="NFRETc",col=rgb(0,0,0,alpha=0.5),pch=20, main=main1,cex.lab=1.5, cex.axis=1.5, cex.main=1.5, cex.sub=1.5)
+	points(data1sub$acctodon,NFRETfit,col=rgb(1,0,0,alpha=0.4),pch=20)
+
+	plot(data1sub$acctodon,NFRETres,xlim=c(0,3),ylim=c(-yupb,yupb),col=rgb(0,0,1),xlab="[acc]:[don]",ylab="NFRETc residuals",pch=15,main=main2,cex.lab=1.5, cex.axis=1.5, cex.main=1.5, cex.sub=1.5)
+	lines(c(0,3),c(0,0),col="red")
+
+}
+if(DFRET+NFRETc==1){if(printresults==1){dev.print(tif,file=name3,unit="px",width=600,height=300)}}
+if(DFRET+NFRETc==2){if(printresults==1){dev.print(tif,file=name3,unit="px",width=600,height=600)}}
+
+
+}
+
+par(old.par)
+summary(fit)
+
+sink(name4)
+cat(name)
+summary(fit)
+sink()

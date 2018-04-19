@@ -1,0 +1,117 @@
+// Intensity determination macro for ImageJ/Fiji
+// Written and developed by Bernhard Hochreiter
+// Medical University Vienna, Institute for Vascular Biology
+// Version 1.0, 11th July 2017
+
+watershed=true;
+cellsize=2000;
+
+//macro start
+title=getTitle;
+getDimensions(width, height, channelCount, sliceCount, frameCount);
+c=frameCount*sliceCount*channelCount;
+rename("image");
+run("Set Scale...", "distance=0 known=0 pixel=1 unit=pixel");
+row = nResults;
+
+run("ROI Manager...");
+if(roiManager("count")>0){
+	roiManager("Deselect");
+	roiManager("Delete");
+}
+
+//creation of Z project
+run("Z Project...", "projection=[Max Intensity]");
+selectWindow("MAX_image");
+
+//background detection
+
+setAutoThreshold("Triangle");
+run("Create Selection");
+roiManager("Add");
+roiManager("Select", 0);
+roiManager("Rename", "background");
+run("Select None");
+resetThreshold();
+
+//overexposure detection
+
+run("Duplicate...", "title=overexposure");
+
+setPixel(0,0,4095);
+setThreshold(3800, 4095);
+run("Convert to Mask");
+run("Dilate");
+run("Create Selection");
+roiManager("Add");
+roiManager("Select", 1);
+roiManager("Rename", "overexposure");
+run("Select None");
+close("overexposure");
+
+//detect cells and remove overexposure
+selectWindow("MAX_image");
+run("Threshold...");
+setAutoThreshold("Huang dark");
+waitForUser("please adjust Threshold");
+run("Convert to Mask");
+if(watershed==true){
+run("Watershed");
+}
+roiManager("Select", 1);
+run("Multiply...", "value=0.000");
+run("Select None");
+run("Analyze Particles...", "size=cellsize-Infinity add");
+
+roiManager("Sort");
+roiManager("Select",roiManager("count")-1);
+run("Make Inverse");
+roiManager("Update");
+
+
+for(i=0;i<roiManager("count")-2;i++){
+	roiManager("Select", newArray(i,roiManager("count")-1));
+	roiManager("AND");
+	roiManager("Update");
+	roiManager("Deselect");
+	roiManager("Select",i);
+	roiManager("Rename", i+1);
+}
+
+//cell analysis
+
+close("MAX_image");
+selectWindow("image");
+
+for(i=0;i<roiManager("count")-2;i++){
+	r = row+i;
+	roiManager("Select", i);
+	getStatistics(area);
+	setResult("label", r, title);
+	setResult("ROI", r, i+1);
+	setResult("area", r, area);
+	for(j=1;j<=c;j++){
+		setSlice(j);
+		roiManager("Select", roiManager("count")-2);
+		getStatistics(area, bg);
+		roiManager("Select", i);
+		roiManager("Set Color", "white");
+		getStatistics(area, mean);
+		setResult("Channel_"+j, r, mean-bg);	
+	}
+}
+
+roiManager("Select",roiManager("count")-1);
+run("Make Inverse");
+roiManager("Update");
+
+//image depiction
+
+roiManager("Set Color", "white");
+roiManager("Select", roiManager("count")-1);
+roiManager("Set Fill Color", "red");
+roiManager("Select", roiManager("count")-2);
+roiManager("Set Fill Color", "blue");
+roiManager("Show All without labels");
+roiManager("UseNames", "true");
+setSlice(1);
